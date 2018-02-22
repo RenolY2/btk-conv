@@ -23,7 +23,9 @@ def write_uint16(f, val):
 def write_sint16(f, val):
     f.write(struct.pack(">h", val))
 def write_uint8(f, val):
-    f.write(struct.pack(">B", val))    
+    f.write(struct.pack(">B", val))
+def write_float(f, val):
+    f.write(struct.pack(">f", val))
 
 def write_padding(f, multiple):
     next_aligned = (f.tell() + (multiple - 1)) & ~(multiple - 1)
@@ -34,9 +36,47 @@ def write_padding(f, multiple):
         pos = i%len(PADDING)
         f.write(PADDING[pos:pos+1])
 
-def format_floatlist(floatlist):
-    return " ".join(str(round(val, 5)) for val in floatlist)
-        
+# Optional rounding
+def opt_round(val, digits):
+    if digits is None:
+        return val
+    else:
+        return round(val, digits)
+
+def write_indented(f, text, level):
+    f.write(" "*level)
+    f.write(text)
+    f.write("\n")
+
+# Find the start of the sequence seq in the list in_list, if the sequence exists
+def find_sequence(in_list, seq):
+    matchup = 0
+    start = -1
+
+    found = False
+    started = False
+
+    for i, val in enumerate(in_list):
+        if val == seq[matchup]:
+            if not started:
+                start = i
+                started = True
+
+            matchup += 1
+            if matchup == len(seq):
+                #start = i-matchup
+                found = True
+                break
+        else:
+            matchup = 0
+            start = -1
+            started = False
+    if not found:
+        start = -1
+
+
+    return start
+
 class StringTable(object):
     def __init__(self):
         self.strings = []
@@ -104,9 +144,14 @@ class StringTable(object):
             offsets.append(f.tell())
             f.write(string.encode("shift-jis"))
             f.write(b"\x00")
-        
-        write_padding(f, 4) #pad to multiple of 4
-            
+
+        end = f.tell()
+
+        for i, offset in enumerate(offsets):
+            f.seek(start+4 + (i*4) + 2)
+            write_uint16(f, offset-start)
+
+        f.seek(end)
         
 class MatrixAnimation(object):
     def __init__(self, index, matindex, name, center):
@@ -118,62 +163,322 @@ class MatrixAnimation(object):
         self.scale = {"U": [], "V": [], "W": []}
         self.rotation = {"U": [], "V": [], "W": []}
         self.translation = {"U": [], "V": [], "W": []}
-    
+
+        self._scale_offsets = {}
+        self._rot_offsets = {}
+        self._translation_offsets = {}
+
     def add_scale(self, axis, scale):
         self.scale[axis].append(scale)
     
     def add_rotation(self, axis, rotation):
         self.rotation[axis].append(rotation)
-    
+
+    def add_scale_vec(self, u, v, w):
+        self.add_scale("U", u)
+        self.add_scale("V", v)
+        self.add_scale("W", w)
+
+    def add_rotation_vec(self, u, v, w):
+        self.add_rotation("U", u)
+        self.add_rotation("V", v)
+        self.add_rotation("W", w)
+
     def add_translation(self, axis, t1, t2, t3, t4):
         self.translation[axis].append((t1, t2, t3, t4))
-        
-        
+
+    # These functions are used for keeping track of the offset
+    # in the json->btk conversion and are otherwise not useful.
+    def _set_scale_offsets(self, axis, val):
+        self._scale_offsets[axis] = val
+
+    def _set_rot_offsets(self, axis, val):
+        self._rot_offsets[axis] = val
+
+    def _set_translation_offsets(self, axis, val):
+        self._translation_offsets[axis] = val
+
+
 class BTKAnim(object):
-    def __init__(self, loop_mode, anglescale, duration):
+    def __init__(self, loop_mode, anglescale, duration, unknown_address=0):
         self.animations = []
         self.loop_mode = loop_mode
         self.anglescale = anglescale
         self.duration = duration
+        self.unknown_address = unknown_address
     
-    def dump(self, f):
-        out = OrderedDict()
-        out["Loop mode"] = self.loop_mode
-        out["Angle scale"] = self.anglescale 
-        out["Duration"] = self.duration
-        out["Animations"] = []
-        
-        for animation in self.animations:
-            anim = OrderedDict()
-            anim["Name"] = animation.name 
-            anim["Center"] = animation.center 
-            anim["Material Index"] = animation.matindex
-            anim["Scale U"] = animation.scale["U"]
-            anim["Scale V"] = animation.scale["V"]
-            anim["Scale W"] = animation.scale["W"]
-            anim["Rotation U"] = animation.rotation["U"]
-            anim["Rotation V"] = animation.rotation["V"]
-            anim["Rotation W"] = animation.rotation["W"]
-            
-            anim["Translation U"] = [
-                format_floatlist(val) for val in animation.translation["U"]
-                ]
-            
-            anim["Translation V"] = [
-                format_floatlist(val) for val in animation.translation["V"]
-                ]
-            anim["Translation W"] = [
-                format_floatlist(val) for val in animation.translation["W"]
-                ]
+    def dump(self, f, digits=None):
+        write_indented(f, "{", level=0)
 
-            out["Animations"].append(anim)
-        
-        json.dump(out, f, indent=4)
-        
+        write_indented(f, "\"loop_mode\": {},".format(self.loop_mode), level=4)
+        write_indented(f, "\"angle_scale\": {},".format(self.anglescale), level=4)
+        write_indented(f, "\"duration\": {},".format(self.duration), level=4)
+        write_indented(f, "\"unknown\": \"0x{:x}\",".format(self.unknown_address), level=4)
+        write_indented(f, "", level=4)
+        write_indented(f, "\"animations\": [", level=4)
+
+        anim_count = len(self.animations)
+        for i, animation in enumerate(self.animations):
+            write_indented(f, "{", level=8)
+
+            write_indented(f, "\"material_name\": \"{}\",".format(animation.name), level=12)
+            write_indented(f, "\"material_index\": {},".format(animation.matindex), level=12)
+            write_indented(f,
+                           "\"center\": [{}, {}, {}],".format(
+                               *(opt_round(x, digits) for x in animation.center)),
+                           level=12)
+
+            write_indented(f, "", level=12)
+
+            write_indented(f, "\"scale_uvw\": [", level=12)
+            scales = len(animation.scale["U"])
+            for j, vals in enumerate(zip(animation.scale["U"], animation.scale["V"], animation.scale["W"])):
+                u,v,w = vals
+                if j < scales-1:
+                    write_indented(f,
+                                   "[{}, {}, {}],".format(
+                                       opt_round(u, digits), opt_round(v, digits), opt_round(w, digits)),
+                                   level=16)
+                else:
+                    write_indented(f,
+                                   "[{}, {}, {}]".format(
+                                       opt_round(u, digits), opt_round(v, digits), opt_round(w, digits)),
+                                   level=16)
+
+            write_indented(f, "],", level=12)
+            write_indented(f, "", level=12)
+
+            write_indented(f, "\"rotation_uvw\": [", level=12)
+            rotations = len(animation.rotation["U"])
+            for j, vals in enumerate(zip(animation.rotation["U"], animation.rotation["V"], animation.rotation["W"])):
+                u,v,w = vals
+                if j < rotations-1:
+                    write_indented(f,
+                                   "[{}, {}, {}],".format(
+                                       opt_round(u, digits), opt_round(v, digits), opt_round(u, digits)),
+                                    level=16)
+                else:
+                    write_indented(f,
+                                   "[{}, {}, {}]".format(
+                                       opt_round(u, digits), opt_round(v, digits), opt_round(u, digits)),
+                                   level=16)
+
+            write_indented(f, "],", level=12)
+            write_indented(f, "", level=12)
+
+            for axis in "UVW":
+                write_indented(f, "\"translation_{}\": [".format(axis.lower()), level=12)
+                trans_count = len(animation.translation[axis])
+                for j, vals in enumerate(animation.translation[axis]):
+                    if j < trans_count-1:
+                        write_indented(f,
+                                       "[{}, {}, {}, {}],".format(
+                                           *(opt_round(x, digits) for x in vals)),
+                                       level=16)
+                    else:
+                        write_indented(f,
+                                       "[{}, {}, {}, {}]".format(
+                                           *(opt_round(x, digits) for x in vals)),
+                                       level=16)
+                if axis != "W":
+                    write_indented(f, "],", level=12)
+                else:
+                    write_indented(f, "]", level=12)
+
+            if i < anim_count-1:
+                write_indented(f, "},", level=8)
+            else:
+                write_indented(f, "}", level=8)
+
+        write_indented(f, "]", level=4)
+        write_indented(f, "}", level=0)
+
+    def write_btk(self, f):
+        f.write(BTKFILEMAGIC)
+        filesize_offset = f.tell()
+        f.write(b"ABCD") # Placeholder for file size
+        write_uint32(f, 1) # Always a section count of 1
+        f.write(b"SVR1" + b"\xFF"*12)
+
+        ttk1_start = f.tell()
+        f.write(b"TTK1")
+
+        ttk1_size_offset = f.tell()
+        f.write(b"EFGH")  # Placeholder for ttk1 size
+        write_uint8(f, self.loop_mode)
+        write_uint8(f, self.anglescale)
+        write_uint16(f, self.duration)
+        write_uint16(f, len(self.animations)*3) # Three times the matrix animations
+        count_offset = f.tell()
+        f.write(b"1+1=11")  # Placeholder for scale, rotation and translation count
+        data_offsets = f.tell()
+        f.write(b"--OnceUponATimeInALandFarAway---")
+        f.write(b"\x00"*(0x7C - f.tell()))
+
+        write_uint32(f, self.unknown_address)
+
+        matrix_anim_start = f.tell()
+        f.write(b"\x00"*(0x36*len(self.animations)))
+        write_padding(f, multiple=4)
+
+        index_start = f.tell()
+        for i in range(len(self.animations)):
+            write_uint16(f, i)
+
+        write_padding(f, multiple=4)
+
+        stringtable = StringTable()
+
+        for anim in self.animations:
+            stringtable.strings.append(anim.name)
+
+        stringtable_start = f.tell()
+        stringtable.write(f)
+
+        write_padding(f, multiple=4)
+
+        matindex_start = f.tell()
+        for anim in self.animations:
+            write_uint8(f, anim.matindex)
+
+        write_padding(f, multiple=4)
+
+        center_start = f.tell()
+        for anim in self.animations:
+            for val in anim.center:
+                write_float(f, val)
+
+        write_padding(f, multiple=4)
+
+
+        all_scales = []
+        all_rotations = []
+        all_translations = []
+        for anim in self.animations:
+            for axis in "UVW":
+                # Set up offset for scale
+                offset = find_sequence(all_scales, anim.scale[axis])
+                if offset == -1:
+                    offset = len(all_scales)
+                    all_scales.extend(anim.scale[axis])
+
+                anim._set_scale_offsets(axis, offset)
+
+                # Set up offset for rotation
+                offset = find_sequence(all_rotations, anim.rotation[axis])
+                if offset == -1:
+                    offset = len(all_rotations)
+                    all_rotations.extend(anim.rotation[axis])
+
+                anim._set_rot_offsets(axis, offset)
+
+                # Set up offset for translation
+                offset = find_sequence(all_translations, anim.translation[axis])
+                if offset == -1:
+                    offset = len(all_translations)
+                    all_translations.extend(anim.translation[axis])
+
+                anim._set_translation_offsets(axis, offset)
+
+        scale_start = f.tell()
+        for val in all_scales:
+            write_float(f, val)
+
+        write_padding(f, 4)
+
+        rotations_start = f.tell()
+        for val in all_rotations:
+            angle = ((val+180) % 360) - 180  # Force the angle between -180 and 180 degrees
+            if angle >= 0:
+                angle = (val/180.0)*(2**15-1)
+            else:
+                angle = (val/180.0)*(2**15)
+
+            write_sint16(f, int(angle))
+
+        write_padding(f, 4)
+
+        translations_start = f.tell()
+        for t1, t2, t3, t4 in all_translations:
+            write_float(f, t1)
+            write_float(f, t2)
+            write_float(f, t3)
+            write_float(f, t4)
+
+        write_padding(f, 4)
+
+        total_size = f.tell()
+
+        f.seek(matrix_anim_start)
+        for anim in self.animations:
+            for axis in "UVW":
+                write_uint16(f, len(anim.scale[axis])) # Scale count for this animation
+                write_uint16(f, anim._scale_offsets[axis]) # Offset into scales
+                write_uint16(f, 1) # Unknown but always 1?
+
+
+                write_uint16(f, len(anim.rotation[axis])) # Rotation count for this animation
+                write_uint16(f, anim._rot_offsets[axis]) # Offset into scales
+                write_uint16(f, 1) # Unknown but always 1?
+
+
+                write_uint16(f, len(anim.translation[axis])) # Translation count for this animation
+
+                # Offset into scales. Note that the offset is into separate float values
+                # while every translation has 4 float values per count
+                write_uint16(f, anim._translation_offsets[axis]*4)
+                write_uint16(f, 1) # Unknown but always 1?
+
+
+        # Fill in all the placeholder values
+        f.seek(filesize_offset)
+        write_uint32(f, total_size)
+
+        f.seek(ttk1_size_offset)
+        write_uint32(f, total_size - ttk1_start)
+
+        f.seek(count_offset)
+        write_uint16(f, len(all_scales))
+        write_uint16(f, len(all_rotations))
+        write_uint16(f, len(all_translations)*4)
+        # Next come the section offsets
+
+        write_uint32(f, matrix_anim_start   - ttk1_start)
+        write_uint32(f, index_start         - ttk1_start)
+        write_uint32(f, stringtable_start   - ttk1_start)
+        write_uint32(f, matindex_start      - ttk1_start)
+        write_uint32(f, center_start        - ttk1_start)
+        write_uint32(f, scale_start         - ttk1_start)
+        write_uint32(f, rotations_start     - ttk1_start)
+        write_uint32(f, translations_start  - ttk1_start)
+
+    @classmethod
+    def from_json(cls, f):
+        btkanimdata = json.load(f)
+
+        btk = cls(
+            btkanimdata["loop_mode"], btkanimdata["angle_scale"],
+            btkanimdata["duration"], unknown_address=int(btkanimdata["unknown"], 16))
+
+        for i, animation in enumerate(btkanimdata["animations"]):
+            matanim = MatrixAnimation(i, animation["material_index"], animation["material_name"], animation["center"])
+
+            for scale in animation["scale_uvw"]:
+                matanim.add_scale_vec(*scale)
+            for rotation in animation["rotation_uvw"]:
+                matanim.add_rotation_vec(*rotation)
+            for translation in animation["translation_u"]:
+                matanim.add_translation("U", *translation)
+            for translation in animation["translation_v"]:
+                matanim.add_translation("V", *translation)
+            for translation in animation["translation_w"]:
+                matanim.add_translation("W", *translation)
+            btk.animations.append(matanim)
+
+        return btk
+
     @classmethod
     def from_btk(cls, f):
-        
-
         header = f.read(8)
         if header != BTKFILEMAGIC:
             raise RuntimeError("Invalid header. Expected {} but found {}".format(BTKFILEMAGIC, header))
@@ -194,6 +499,8 @@ class BTKAnim(object):
         anglescale = read_uint8(f)
         duration = read_uint16(f)
         btk = cls(loop_mode, anglescale, duration)
+
+
         threetimestexmatanims = read_uint16(f)
         scale_count = read_uint16(f)
         rotation_count = read_uint16(f)
@@ -214,6 +521,7 @@ class BTKAnim(object):
         translation_offset  = read_uint32(f) + ttk_start    # float 
 
 
+
         print("Position:", hex(f.tell()))
         print("tex anim offset", hex(texmat_anim_offset))
         print("index offset", hex(index_offset))
@@ -226,7 +534,11 @@ class BTKAnim(object):
         
         anim_count = threetimestexmatanims//3
         print("Animation count:", anim_count)
-        # Read indices 
+
+        f.seek(0x7C)
+        unknown_address = read_uint32(f)
+        btk.unknown_address = unknown_address
+        # Read indices
         indices = []
         f.seek(index_offset)
         for i in range(anim_count):
@@ -312,19 +624,26 @@ class BTKAnim(object):
             print(w_scale, w_rot, w_trans)
             btk.animations.append(matrix_animation)
             
-        return btk 
-            
-            
-            
-            
-        
-        
-    def from_txt(self, f):
-        pass
+        return btk
     
 if __name__ == "__main__":
-    with open("sea.btk", "rb") as f:
+    with open("sky.btk", "rb") as f:
         mybtk = BTKAnim.from_btk(f)
         
     with open("btkdumped.txt", "w") as f:
         mybtk.dump(f)
+
+    with open("btkdumped.txt", "r") as f:
+        newbtk = BTKAnim.from_json(f)
+
+    with open("newbtkdumped.txt", "w") as f:
+        newbtk.dump(f)
+
+    with open("newbtk.btk", "wb") as f:
+        newbtk.write_btk(f)
+
+    with open("newbtk.btk", "rb") as f:
+        newnewbtk = BTKAnim.from_btk(f)
+
+    with open("evennewerbtk.btk.json", "w") as f:
+        newnewbtk.dump(f)
