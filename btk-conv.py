@@ -389,11 +389,11 @@ class BTKAnim(object):
         rotations_start = f.tell()
         for val in all_rotations:
             angle = ((val+180) % 360) - 180  # Force the angle between -180 and 180 degrees
+            print(val, "becomes", angle)
             if angle >= 0:
-                angle = (val/180.0)*(2**15-1)
+                angle = (angle/180.0)*(2**15-1)
             else:
-                angle = (val/180.0)*(2**15)
-
+                angle = (angle/180.0)*(2**15)
             write_sint16(f, int(angle))
 
         write_padding(f, 4)
