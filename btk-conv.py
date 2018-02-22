@@ -458,7 +458,8 @@ class BTKAnim(object):
 
         btk = cls(
             btkanimdata["loop_mode"], btkanimdata["angle_scale"],
-            btkanimdata["duration"], unknown_address=int(btkanimdata["unknown"], 16))
+            btkanimdata["duration"], unknown_address=int(btkanimdata["unknown"], 16)
+        )
 
         for i, animation in enumerate(btkanimdata["animations"]):
             matanim = MatrixAnimation(i, animation["material_index"], animation["material_name"], animation["center"])
@@ -627,23 +628,50 @@ class BTKAnim(object):
         return btk
     
 if __name__ == "__main__":
-    with open("sky.btk", "rb") as f:
-        mybtk = BTKAnim.from_btk(f)
-        
-    with open("btkdumped.txt", "w") as f:
-        mybtk.dump(f)
+    import argparse
 
-    with open("btkdumped.txt", "r") as f:
-        newbtk = BTKAnim.from_json(f)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input",
+                        help="Path to btk or json-formatted text file.")
+    parser.add_argument("--ndigits", default=-1, type=int,
+                        help="The amount of digits after the decimal point to which values should be rounded "
+                             "when converting btk to json. -1 for no rounding.")
+    parser.add_argument("output", default=None, nargs = '?',
+                        help=(
+                            "Path to which the converted file should be written. "
+                            "If input was a BTK, writes a json file. If input was a json file, writes a BTK."
+                            "If left out, output defaults to <input>.json or <input>.btk."
+                        ))
 
-    with open("newbtkdumped.txt", "w") as f:
-        newbtk.dump(f)
+    args = parser.parse_args()
 
-    with open("newbtk.btk", "wb") as f:
-        newbtk.write_btk(f)
+    if args.ndigits < 0:
+        ndigits = None
+    else:
+        ndigits = args.ndigits
 
-    with open("newbtk.btk", "rb") as f:
-        newnewbtk = BTKAnim.from_btk(f)
 
-    with open("evennewerbtk.btk.json", "w") as f:
-        newnewbtk.dump(f)
+    with open(args.input, "rb") as f:
+        if f.read(8) == BTKFILEMAGIC:
+            btk_to_json = True
+        else:
+            btk_to_json = False
+
+    if args.output is None:
+        if btk_to_json:
+            output = args.input+".json"
+        else:
+            output = args.input+".btk"
+    else:
+        output = args.output
+
+    if btk_to_json:
+        with open(args.input, "rb") as f:
+            btk = BTKAnim.from_btk(f)
+        with open(output, "w") as f:
+            btk.dump(f, digits=ndigits)
+    else:
+        with open(args.input, "rb") as f:
+            btk = BTKAnim.from_json(f)
+        with open(output, "wb") as f:
+            btk.write_btk(f)
