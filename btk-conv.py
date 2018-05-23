@@ -1,5 +1,7 @@
 import struct 
 import json 
+import codecs
+import io
 from collections import OrderedDict
 BTKFILEMAGIC = b"J3D1btk1"
 PADDING = b"This is padding data to align"
@@ -671,7 +673,23 @@ if __name__ == "__main__":
         with open(output, "w") as f:
             btk.dump(f, digits=ndigits)
     else:
+        # Detect BOM of input file
         with open(args.input, "rb") as f:
+            bom = f.read(4)
+        
+        if bom.startswith(codecs.BOM_UTF8):
+            encoding = "utf-8-bom"
+        elif bom.startswith(codecs.BOM_UTF32_LE) or bom.startswith(codecs.BOM_UTF32_BE):
+            encoding = "utf-32"
+        elif bom.startswith(codecs.BOM_UTF16_LE) or bom.startswith(codecs.BOM_UTF16_BE):
+            encoding = "utf-16"
+        else:
+            encoding = "utf-8"
+        
+        print("Assuming encoding of input file:", encoding)
+        
+        with io.open(args.input, "r", encoding=encoding) as f:
+            #with open(args.input, "rb") as f:
             btk = BTKAnim.from_json(f)
         with open(output, "wb") as f:
             btk.write_btk(f)
