@@ -32,18 +32,23 @@ optional arguments:
 
 ## About the JSON structure
 Header:
-* loop mode: Effect unknown but might affect how the animation loops
-* angle scale: Effect unknown 
-* duration: How long the animation plays, unit unknown 
+* loop mode: 0 and 1: plays once; 2: loops; 3: Play once forward, then backward; 4: Like 3 but on repeat
+* angle scale: Signed byte; Bigger values means bigger angles are possible but steps are more coarse; Vice versa for smaller values
+* duration: How long the animation plays in frames
 * unknown: Some sort of address? Often 0x801514a8, sometimes zero
 
 Animations:
 * material name: Name of the material to which the animation is applied. Name needs to match a material name from the BMD model to which the BTK belongs (when you make custom BMDs, material name in the BMD will be what the material name you are using in the 3d modelling program is)
-* material index: Purpose unknown, but when there are two animations with the same material name, one animation has the index 0 and the other has the index 1 (Might apply to more than two too)
-* center: Center coordinates in the UVW map?
-* scale uvw: Coordinates are scaled by these values. 1.0 for all three for neutral scale.
-* rotation uvw: Rotation of coordinates in degrees. Goes from -180 to 180. 0.0 for all three values for neutral.
-* translation u, v, w: Moves coordinates (Allows for scrolling textures). 4 values per entry. First value is time at which the translation happens (compare with duration from above). Second is position to which the coordinates are moved. Third and fourth are unknown, but might affect interpolation or speed.
+* material texture index: For materials with multiple textures, this is the texture to which the animation will be applied
+* center: Center coordinates in relation to the UV map
+
+BTK works with keyframes. Each entry in the scale, rotation and translation sections is made of a group of 4 values that form a keyframe. First value is the frame number of the keyframe. Second is the scale/rotation/translation value, third and fourth are the ingoing and outgoing tangents. Tangents affect the interpolation between two consecutive keyframes. BTK uses Cubic Hermite Interpolation for this.
+
+* scale u, v scales the u and v components of the coordinates
+* rotate u, v rotates the u and v components, likely in relation to the center specified above
+* translate u, v translates the u and v components, resulting in scrolling
+
+The W component of scale, rotate and translate appears to go unused and can likely be ignored
 
 ## Tips
 * Having trouble making animations? Take existing BTKs, change the material name of the animation to one from your model and experiment with it!
