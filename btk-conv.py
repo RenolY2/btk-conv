@@ -504,19 +504,17 @@ class BTKAnim(object):
             for axis in "UVW":
                 write_uint16(f, len(anim.scale[axis])) # Scale count for this animation
                 write_uint16(f, anim._scale_offsets[axis]) # Offset into scales
-                write_uint16(f, 1) # Unknown but always 1?
+                write_uint16(f, 1) # Tangent type, 0 = only TangentIn; 1 = TangentIn and TangentOut
 
 
                 write_uint16(f, len(anim.rotation[axis])) # Rotation count for this animation
-                write_uint16(f, anim._rot_offsets[axis]) # Offset into scales
-                write_uint16(f, 1) # Unknown but always 1?
+                write_uint16(f, anim._rot_offsets[axis]) # Offset into rotations
+                write_uint16(f, 1) # Tangent type, 0 = only TangentIn; 1 = TangentIn and TangentOut
 
 
                 write_uint16(f, len(anim.translation[axis])) # Translation count for this animation
-
-                # Offset into scales
-                write_uint16(f, anim._translation_offsets[axis])
-                write_uint16(f, 1) # Unknown but always 1?
+                write_uint16(f, anim._translation_offsets[axis])# offset into translations
+                write_uint16(f, 1) # Tangent type, 0 = only TangentIn; 1 = TangentIn and TangentOut
 
 
         # Fill in all the placeholder values
