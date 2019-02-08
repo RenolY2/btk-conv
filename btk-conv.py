@@ -14,6 +14,8 @@ def read_sint16(f):
     return struct.unpack(">h", f.read(2))[0]
 def read_uint8(f):
     return struct.unpack(">B", f.read(1))[0]
+def read_sint8(f):
+    return struct.unpack(">b", f.read(1))[0]
 def read_float(f):
     return struct.unpack(">f", f.read(4))[0]
     
@@ -26,6 +28,8 @@ def write_sint16(f, val):
     f.write(struct.pack(">h", val))
 def write_uint8(f, val):
     f.write(struct.pack(">B", val))
+def write_sint8(f, val):
+    f.write(struct.pack(">b", val))
 def write_float(f, val):
     f.write(struct.pack(">f", val))
 
@@ -79,6 +83,10 @@ def find_sequence(in_list, seq):
 
     return start
 
+def find_single_value(in_list, value):
+    
+    return find_sequence(in_list, [value])
+    
 class StringTable(object):
     def __init__(self):
         self.strings = []
@@ -155,6 +163,50 @@ class StringTable(object):
 
         f.seek(end)
         
+class AnimComponent(object):
+    def __init__(self, time, value, tangentIn, tangentOut=None):
+        self.time = time 
+        self.value = value
+        self.tangentIn = tangentIn 
+        
+        if tangentOut is None:
+            self.tangentOut = tangentIn
+        else:
+            self.tangentOut = tangentOut
+    
+    def convert_rotation(self, rotscale):
+        self.value *= rotscale 
+        self.tangentIn *= rotscale
+        self.tangentOut *= rotscale
+        
+    def convert_rotation_inverse(self, rotscale):
+        self.value /= rotscale 
+        self.tangentIn /= rotscale
+        self.tangentOut /= rotscale
+    
+    def serialize(self):
+        return [self.time, self.value, self.tangentIn, self.tangentOut]
+    
+    def __repr__(self):
+        return "Time: {0}, Val: {1}, TanIn: {2}, TanOut: {3}".format(self.time, self.value, self.tangentIn, self.tangentOut).__repr__()
+        
+    @classmethod
+    def from_array(cls, offset, index, count, valarray, tanType):
+        if count == 1:
+            return cls(0.0, valarray[offset+index], 0.0, 0.0)
+            
+        
+        else:
+            print("TanType:", tanType)
+            print(len(valarray), offset+index*4)
+            
+            if tanType == 0:
+                return cls(valarray[offset + index*3], valarray[offset + index*3 + 1], valarray[offset + index*3 + 2])
+            elif tanType == 1:
+                return cls(valarray[offset + index*4], valarray[offset + index*4 + 1], valarray[offset + index*4 + 2], valarray[offset + index*4 + 3])
+            else:
+                raise RuntimeError("unknown tangent type: {0}".format(tanType))
+    
 class MatrixAnimation(object):
     def __init__(self, index, matindex, name, center):
         self._index = index 
@@ -170,24 +222,14 @@ class MatrixAnimation(object):
         self._rot_offsets = {}
         self._translation_offsets = {}
 
-    def add_scale(self, axis, scale):
-        self.scale[axis].append(scale)
+    def add_scale(self, axis, comp):
+        self.scale[axis].append(comp)
     
-    def add_rotation(self, axis, rotation):
-        self.rotation[axis].append(rotation)
-
-    def add_scale_vec(self, u, v, w):
-        self.add_scale("U", u)
-        self.add_scale("V", v)
-        self.add_scale("W", w)
-
-    def add_rotation_vec(self, u, v, w):
-        self.add_rotation("U", u)
-        self.add_rotation("V", v)
-        self.add_rotation("W", w)
-
-    def add_translation(self, axis, t1, t2, t3, t4):
-        self.translation[axis].append((t1, t2, t3, t4))
+    def add_rotation(self, axis, comp):
+        self.rotation[axis].append(comp)
+        
+    def add_translation(self, axis, comp):
+        self.translation[axis].append(comp)
 
     # These functions are used for keeping track of the offset
     # in the json->btk conversion and are otherwise not useful.
@@ -224,7 +266,7 @@ class BTKAnim(object):
             write_indented(f, "{", level=8)
 
             write_indented(f, "\"material_name\": \"{}\",".format(animation.name), level=12)
-            write_indented(f, "\"material_index\": {},".format(animation.matindex), level=12)
+            write_indented(f, "\"material_texture_index\": {},".format(animation.matindex), level=12)
             write_indented(f,
                            "\"center\": [{}, {}, {}],".format(
                                *(opt_round(x, digits) for x in animation.center)),
@@ -232,55 +274,53 @@ class BTKAnim(object):
 
             write_indented(f, "", level=12)
 
-            write_indented(f, "\"scale_uvw\": [", level=12)
-            scales = len(animation.scale["U"])
-            for j, vals in enumerate(zip(animation.scale["U"], animation.scale["V"], animation.scale["W"])):
-                u,v,w = vals
-                if j < scales-1:
-                    write_indented(f,
-                                   "[{}, {}, {}],".format(
-                                       opt_round(u, digits), opt_round(v, digits), opt_round(w, digits)),
-                                   level=16)
-                else:
-                    write_indented(f,
-                                   "[{}, {}, {}]".format(
-                                       opt_round(u, digits), opt_round(v, digits), opt_round(w, digits)),
-                                   level=16)
-
-            write_indented(f, "],", level=12)
-            write_indented(f, "", level=12)
-
-            write_indented(f, "\"rotation_uvw\": [", level=12)
-            rotations = len(animation.rotation["U"])
-            for j, vals in enumerate(zip(animation.rotation["U"], animation.rotation["V"], animation.rotation["W"])):
-                u,v,w = vals
-                if j < rotations-1:
-                    write_indented(f,
-                                   "[{}, {}, {}],".format(
-                                       opt_round(u, digits), opt_round(v, digits), opt_round(u, digits)),
-                                    level=16)
-                else:
-                    write_indented(f,
-                                   "[{}, {}, {}]".format(
-                                       opt_round(u, digits), opt_round(v, digits), opt_round(u, digits)),
-                                   level=16)
-
-            write_indented(f, "],", level=12)
-            write_indented(f, "", level=12)
-
             for axis in "UVW":
-                write_indented(f, "\"translation_{}\": [".format(axis.lower()), level=12)
-                trans_count = len(animation.translation[axis])
-                for j, vals in enumerate(animation.translation[axis]):
+                write_indented(f, "\"scale_{}\": [".format(axis.lower()), level=12)
+                trans_count = len(animation.scale[axis])
+                for j, comp in enumerate(animation.scale[axis]):
                     if j < trans_count-1:
                         write_indented(f,
                                        "[{}, {}, {}, {}],".format(
-                                           *(opt_round(x, digits) for x in vals)),
+                                           *(opt_round(x, digits) for x in comp.serialize())),
                                        level=16)
                     else:
                         write_indented(f,
                                        "[{}, {}, {}, {}]".format(
-                                           *(opt_round(x, digits) for x in vals)),
+                                           *(opt_round(x, digits) for x in comp.serialize())),
+                                       level=16)
+                                       
+                write_indented(f, "],", level=12)
+            
+            for axis in "UVW":
+                write_indented(f, "\"rotation_{}\": [".format(axis.lower()), level=12)
+                trans_count = len(animation.rotation[axis])
+                for j, comp in enumerate(animation.rotation[axis]):
+                    if j < trans_count-1:
+                        write_indented(f,
+                                       "[{}, {}, {}, {}],".format(
+                                           *(opt_round(x, digits) for x in comp.serialize())),
+                                       level=16)
+                    else:
+                        write_indented(f,
+                                       "[{}, {}, {}, {}]".format(
+                                           *(opt_round(x, digits) for x in comp.serialize())),
+                                       level=16)
+               
+                write_indented(f, "],", level=12)
+
+            for axis in "UVW":
+                write_indented(f, "\"translation_{}\": [".format(axis.lower()), level=12)
+                trans_count = len(animation.translation[axis])
+                for j, comp in enumerate(animation.translation[axis]):
+                    if j < trans_count-1:
+                        write_indented(f,
+                                       "[{}, {}, {}, {}],".format(
+                                           *(opt_round(x, digits) for x in comp.serialize())),
+                                       level=16)
+                    else:
+                        write_indented(f,
+                                       "[{}, {}, {}, {}]".format(
+                                           *(opt_round(x, digits) for x in comp.serialize())),
                                        level=16)
                 if axis != "W":
                     write_indented(f, "],", level=12)
@@ -308,7 +348,10 @@ class BTKAnim(object):
         ttk1_size_offset = f.tell()
         f.write(b"EFGH")  # Placeholder for ttk1 size
         write_uint8(f, self.loop_mode)
-        write_uint8(f, self.anglescale)
+        write_sint8(f, self.anglescale)
+        
+        rotscale = (2**self.anglescale)/(180.0 / 32768.0)
+        
         write_uint16(f, self.duration)
         write_uint16(f, len(self.animations)*3) # Three times the matrix animations
         count_offset = f.tell()
@@ -359,28 +402,75 @@ class BTKAnim(object):
         for anim in self.animations:
             for axis in "UVW":
                 # Set up offset for scale
-                offset = find_sequence(all_scales, anim.scale[axis])
+                if len(anim.scale[axis]) == 1:
+                    sequence = [anim.scale[axis][0].value]
+                else:
+                    sequence = []
+                    for comp in anim.scale[axis]:
+                        sequence.append(comp.time)
+                        sequence.append(comp.value)
+                        sequence.append(comp.tangentIn)
+                        sequence.append(comp.tangentOut)
+                    
+                offset = find_sequence(all_scales,sequence)
                 if offset == -1:
                     offset = len(all_scales)
-                    all_scales.extend(anim.scale[axis])
-
+                    all_scales.extend(sequence)
+                    
                 anim._set_scale_offsets(axis, offset)
 
                 # Set up offset for rotation
-                offset = find_sequence(all_rotations, anim.rotation[axis])
+                if len(anim.rotation[axis]) == 1:
+                    comp = anim.rotation[axis][0]
+                    angle = ((comp.value+180) % 360) - 180
+                    sequence = [angle]
+                else:
+                    sequence = []
+                    for comp in anim.rotation[axis]:
+                        angle = ((comp.value+180) % 360) - 180
+                        sequence.append(comp.time)
+                        sequence.append(angle/rotscale)
+                        sequence.append(comp.tangentIn/rotscale)
+                        sequence.append(comp.tangentOut/rotscale)
+                    
+                offset = find_sequence(all_rotations, sequence)
                 if offset == -1:
                     offset = len(all_rotations)
-                    all_rotations.extend(anim.rotation[axis])
-
+                    all_rotations.extend(sequence)
                 anim._set_rot_offsets(axis, offset)
+                """for comp in anim.rotation[axis]:
+                    all_rotations.append(comp.frame)
+                    all_rotations.append(comp.value/rotscale)
+                    all_rotations.append(comp.tangentIn/rotscale)
+                    all_rotations.append(comp.tangentOut/rotscale)
+
+                """
 
                 # Set up offset for translation
-                offset = find_sequence(all_translations, anim.translation[axis])
+                if len(anim.translation[axis]) == 1:
+                    sequence = [anim.translation[axis][0].value]
+                else:
+                    sequence = []
+                    for comp in anim.translation[axis]:
+                        sequence.append(comp.time)
+                        sequence.append(comp.value)
+                        sequence.append(comp.tangentIn)
+                        sequence.append(comp.tangentOut)
+                    
+                offset = find_sequence(all_translations, sequence)
                 if offset == -1:
                     offset = len(all_translations)
-                    all_translations.extend(anim.translation[axis])
-
+                    all_translations.extend(sequence)
                 anim._set_translation_offsets(axis, offset)
+                
+                """offset = len(all_translations)
+                for comp in anim.translation[axis]:
+                    all_translations.append(comp.frame)
+                    all_translations.append(comp.value)
+                    all_translations.append(comp.tangentIn)
+                    all_translations.append(comp.tangentOut)"""
+
+                
 
         scale_start = f.tell()
         for val in all_scales:
@@ -390,22 +480,20 @@ class BTKAnim(object):
 
         rotations_start = f.tell()
         for val in all_rotations:
-            angle = ((val+180) % 360) - 180  # Force the angle between -180 and 180 degrees
+            """angle = ((val+180) % 360) - 180  # Force the angle between -180 and 180 degrees
             print(val, "becomes", angle)
             if angle >= 0:
                 angle = (angle/180.0)*(2**15-1)
             else:
-                angle = (angle/180.0)*(2**15)
-            write_sint16(f, int(angle))
+                angle = (angle/180.0)*(2**15)"""
+            write_sint16(f, int(val))
 
         write_padding(f, 4)
 
         translations_start = f.tell()
-        for t1, t2, t3, t4 in all_translations:
-            write_float(f, t1)
-            write_float(f, t2)
-            write_float(f, t3)
-            write_float(f, t4)
+        for val in all_translations:
+            print(val)
+            write_float(f, val)
 
         write_padding(f, 4)
 
@@ -426,9 +514,8 @@ class BTKAnim(object):
 
                 write_uint16(f, len(anim.translation[axis])) # Translation count for this animation
 
-                # Offset into scales. Note that the offset is into separate float values
-                # while every translation has 4 float values per count
-                write_uint16(f, anim._translation_offsets[axis]*4)
+                # Offset into scales
+                write_uint16(f, anim._translation_offsets[axis])
                 write_uint16(f, 1) # Unknown but always 1?
 
 
@@ -442,7 +529,7 @@ class BTKAnim(object):
         f.seek(count_offset)
         write_uint16(f, len(all_scales))
         write_uint16(f, len(all_rotations))
-        write_uint16(f, len(all_translations)*4)
+        write_uint16(f, len(all_translations))
         # Next come the section offsets
 
         write_uint32(f, matrix_anim_start   - ttk1_start)
@@ -464,18 +551,32 @@ class BTKAnim(object):
         )
 
         for i, animation in enumerate(btkanimdata["animations"]):
-            matanim = MatrixAnimation(i, animation["material_index"], animation["material_name"], animation["center"])
+            matanim = MatrixAnimation(
+                i, 
+                animation["material_texture_index"], 
+                animation["material_name"], 
+                animation["center"])
 
-            for scale in animation["scale_uvw"]:
-                matanim.add_scale_vec(*scale)
-            for rotation in animation["rotation_uvw"]:
-                matanim.add_rotation_vec(*rotation)
+            for scale in animation["scale_u"]:
+                matanim.add_scale("U", AnimComponent(*scale))
+            for scale in animation["scale_v"]:
+                matanim.add_scale("V", AnimComponent(*scale))
+            for scale in animation["scale_w"]:
+                matanim.add_scale("W", AnimComponent(*scale))
+                
+            for rotation in animation["rotation_u"]:
+                matanim.add_rotation("U",  AnimComponent(*rotation))
+            for rotation in animation["rotation_v"]:
+                matanim.add_rotation("V",  AnimComponent(*rotation))
+            for rotation in animation["rotation_w"]:
+                matanim.add_rotation("W",  AnimComponent(*rotation))
+            
             for translation in animation["translation_u"]:
-                matanim.add_translation("U", *translation)
+                matanim.add_translation("U", AnimComponent(*translation))
             for translation in animation["translation_v"]:
-                matanim.add_translation("V", *translation)
+                matanim.add_translation("V", AnimComponent(*translation))
             for translation in animation["translation_w"]:
-                matanim.add_translation("W", *translation)
+                matanim.add_translation("W", AnimComponent(*translation))
             btk.animations.append(matanim)
 
         return btk
@@ -499,9 +600,10 @@ class BTKAnim(object):
         ttk_sectionsize = read_uint32(f)
 
         loop_mode = read_uint8(f)
-        anglescale = read_uint8(f)
+        angle_scale = read_sint8(f) 
+        rotscale = (2.0**angle_scale) * (180.0 / 32768.0);
         duration = read_uint16(f)
-        btk = cls(loop_mode, anglescale, duration)
+        btk = cls(loop_mode, angle_scale, duration)
 
 
         threetimestexmatanims = read_uint16(f)
@@ -568,7 +670,7 @@ class BTKAnim(object):
         rotations = []
         f.seek(rotation_offset)
         for i in range(rotation_count):
-            rotations.append((read_sint16(f)/32768.0)*180)
+            rotations.append((read_sint16(f)))
         
         # Read translations 
         translations = []
@@ -600,23 +702,23 @@ class BTKAnim(object):
             matrix_animation = MatrixAnimation(i, mat_index, name, center)
             
             for scale, axis in ((u_scale, "U"), (v_scale, "V"), (w_scale, "W")):
-                count, offset, unknown = scale 
-                print(axis, count)
+                count, offset, tan_type = scale 
                 for j in range(count):
-                    scale_val = scales[offset+j]
-                    matrix_animation.add_scale(axis, scale_val)
+                    comp = AnimComponent.from_array(offset, j, count, scales, tan_type)
+                    matrix_animation.add_scale(axis, comp)
             
             for rotation, axis in ((u_rot, "U"), (v_rot, "V"), (w_rot, "W")):
-                count, offset, unknown = rotation 
+                count, offset, tan_type = rotation 
                 for j in range(count):
-                    rot_val = rotations[offset+j]
-                    matrix_animation.add_rotation(axis, rot_val)
+                    comp = AnimComponent.from_array(offset, j, count, rotations, tan_type)
+                    comp.convert_rotation(rotscale)
+                    matrix_animation.add_rotation(axis, comp)
                     
             for translation, axis in ((u_trans, "U"), (v_trans, "V"), (w_trans, "W")):
-                count, offset, unknown = translation
+                count, offset, tan_type = translation
                 for j in range(count):
-                    t1, t2, t3, t4 = translations[offset+j*4:offset+(j+1)*4]
-                    matrix_animation.add_translation(axis, t1, t2, t3, t4)        
+                    comp = AnimComponent.from_array(offset, j, count, translations, tan_type)
+                    matrix_animation.add_translation(axis, comp)        
             
             
        
