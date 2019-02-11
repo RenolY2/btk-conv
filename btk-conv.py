@@ -350,7 +350,7 @@ class BTKAnim(object):
         write_uint8(f, self.loop_mode)
         write_sint8(f, self.anglescale)
         
-        rotscale = (2**self.anglescale)/(180.0 / 32768.0)
+        rotscale = (2.0**self.anglescale)*(180.0 / 32768.0)
         
         write_uint16(f, self.duration)
         write_uint16(f, len(self.animations)*3) # Three times the matrix animations
@@ -422,17 +422,18 @@ class BTKAnim(object):
                 # Set up offset for rotation
                 if len(anim.rotation[axis]) == 1:
                     comp = anim.rotation[axis][0]
-                    angle = ((comp.value+180) % 360) - 180
-                    sequence = [angle]
+                    #angle = ((comp.value+180) % 360) - 180
+                    sequence = [comp.value/rotscale]
+                    print("seq", sequence)
                 else:
                     sequence = []
                     for comp in anim.rotation[axis]:
-                        angle = ((comp.value+180) % 360) - 180
+                        #angle = ((comp.value+180) % 360) - 180
                         sequence.append(comp.time)
-                        sequence.append(angle/rotscale)
+                        sequence.append(comp.value/rotscale)
                         sequence.append(comp.tangentIn/rotscale)
                         sequence.append(comp.tangentOut/rotscale)
-                    
+                    print("seq", sequence)
                 offset = find_sequence(all_rotations, sequence)
                 if offset == -1:
                     offset = len(all_rotations)
