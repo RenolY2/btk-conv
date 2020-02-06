@@ -496,7 +496,7 @@ class BTKAnim(object):
             print(val)
             write_float(f, val)
 
-        write_padding(f, 4)
+        write_padding(f, 32)
 
         total_size = f.tell()
 
@@ -516,7 +516,6 @@ class BTKAnim(object):
                 write_uint16(f, len(anim.translation[axis])) # Translation count for this animation
                 write_uint16(f, anim._translation_offsets[axis])# offset into translations
                 write_uint16(f, 1) # Tangent type, 0 = only TangentIn; 1 = TangentIn and TangentOut
-
 
         # Fill in all the placeholder values
         f.seek(filesize_offset)
